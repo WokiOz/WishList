@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wishlist de Gabriel</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Mountains+of+Christmas:wght@700&family=Nunito:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="snow" aria-hidden="true"></div>
+
+  <header class="hero">
+    <h1 id="title"></h1>
+    <p id="subtitle"></p>
+  </header>
+
+  <main>
+    <section class="card identity">
+      <h2>🎅 Qui êtes-vous ?</h2>
+      <p>Votre nom sera associé aux cadeaux que vous réservez.</p>
+      <div class="row">
+        <input id="firstName" placeholder="Prénom" autocomplete="given-name">
+        <input id="lastName" placeholder="Nom" autocomplete="family-name">
+      </div>
+    </section>
+
+    <section id="items" class="grid"></section>
+    <p id="empty" class="empty" hidden>La liste est encore vide… le père Noël prépare sa hotte ! 🎄</p>
+  </main>
+
+  <footer><a href="admin.html">Administration</a></footer>
+
+  <script src="common.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

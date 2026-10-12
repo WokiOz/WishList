@@ -1,0 +1,15 @@
+services:
+  wishlist:
+    build: .
+    container_name: wishlist-gabriel
+    restart: unless-stopped
+    ports:
+      - "8941:3000"
+    environment:
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-moi}
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+    volumes:
+      - wishlist-data:/app/data
+
+volumes:
+  wishlist-data:

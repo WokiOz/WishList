@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Administration</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Mountains+of+Christmas:wght@700&family=Nunito:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="hero">
+    <h1 id="title"></h1>
+    <p>Administration · <a href="/">← Retour à la liste</a></p>
+  </header>
+
+  <main>
+    <form id="login" class="card">
+      <h2>🔒 Connexion</h2>
+      <div class="row">
+        <input type="password" name="password" placeholder="Mot de passe admin" required>
+        <button>Entrer</button>
+      </div>
+    </form>
+
+    <div id="admin" hidden>
+      <form id="settings" class="card">
+        <h2>🎄 Apparence du site</h2>
+        <label>Titre <input name="title"></label>
+        <label>Sous-titre <input name="subtitle"></label>
+        <label>Image de fond (fichier) <input type="file" name="background" accept="image/*"></label>
+        <label>…ou URL de l'image de fond <input name="backgroundUrl" placeholder="https://"></label>
+        <label class="check"><input type="checkbox" name="removeBackground" value="true"> Retirer l'image de fond</label>
+        <button>Enregistrer</button>
+      </form>
+
+      <form id="itemForm" class="card">
+        <h2 id="formTitle">🎁 Ajouter un cadeau</h2>
+        <input type="hidden" name="itemId">
+        <label>Titre * <input name="title" required></label>
+        <label>Description <textarea name="description" rows="2"></textarea></label>
+        <label>Prix <input name="price" placeholder="ex : 25 €"></label>
+        <label>Lien <input name="link" placeholder="https://"></label>
+        <label>Photo (fichier) <input type="file" name="image" accept="image/*"></label>
+        <label>…ou URL de la photo <input name="imageUrl" placeholder="https://"></label>
+        <label class="check" id="resetWrap" hidden><input type="checkbox" name="resetTaken" value="true"> Remettre en « non pris »</label>
+        <div class="row">
+          <button>Enregistrer</button>
+          <button type="button" id="cancel" class="secondary" hidden>Annuler</button>
+        </div>
+      </form>
+
+      <section class="card">
+        <h2>📋 Cadeaux</h2>
+        <table>
+          <thead><tr><th>Cadeau</th><th>Statut</th><th></th></tr></thead>
+          <tbody id="list"></tbody>
+        </table>
+      </section>
+    </div>
+  </main>
+
+  <script src="common.js"></script>
+  <script src="admin.js"></script>
+</body>
+</html>
