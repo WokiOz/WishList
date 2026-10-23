@@ -6,7 +6,7 @@ services:
     ports:
       - "8941:3000"
     environment:
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-moi}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Définir ADMIN_PASSWORD dans les variables de la stack}
       DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
     volumes:
       - wishlist-data:/app/data
