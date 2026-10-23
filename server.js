@@ -8,8 +8,13 @@ const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'change-moi';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 const WEBHOOK = process.env.DISCORD_WEBHOOK_URL;
+
+if (!ADMIN_PASSWORD || ADMIN_PASSWORD === 'change-moi') {
+  console.error('ADMIN_PASSWORD doit être défini (et différent de "change-moi").');
+  process.exit(1);
+}
 
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
@@ -34,21 +39,36 @@ async function notify(message) {
     await fetch(WEBHOOK, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: 'Wishlist de Gabriel', content: message }),
+      // allowed_mentions vide : aucun @everyone / @here / @role ne peut pinger
+      body: JSON.stringify({ username: 'Wishlist de Gabriel', content: message, allowed_mentions: { parse: [] } }),
     });
   } catch (err) {
     console.error('Webhook Discord en échec :', err.message);
   }
 }
 
+// --- Validation ------------------------------------------------------------
+// Texte libre : toujours une chaîne, tronquée
+const str = (value, max = 500) => (typeof value === 'string' ? value.trim().slice(0, max) : '');
+// Lien / image externe : uniquement http(s)
+const url = (value) => {
+  const v = str(value, 2000);
+  return /^https?:\/\//i.test(v) ? v : '';
+};
+// Nom de personne : lettres, espaces, tiret, apostrophe, point (pas de markdown/lien/mention Discord)
+const personName = (value) => str(value, 50).replace(/[^\p{L}\p{M} '’.-]/gu, '').trim();
+
 // --- Upload ----------------------------------------------------------------
+// L'extension est déduite du type (liste blanche), jamais du nom envoyé : pas de .html / .svg
+const IMAGE_TYPES = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/gif': '.gif', 'image/webp': '.webp' };
 const upload = multer({
   storage: multer.diskStorage({
     destination: UPLOAD_DIR,
-    filename: (req, file, cb) => cb(null, crypto.randomUUID() + path.extname(file.originalname).toLowerCase()),
+    filename: (req, file, cb) => cb(null, crypto.randomUUID() + IMAGE_TYPES[file.mimetype]),
   }),
-  limits: { fileSize: 10 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => cb(null, file.mimetype.startsWith('image/')),
+  limits: { fileSize: 10 * 1024 * 1024, files: 1, fields: 20 },
+  fileFilter: (req, file, cb) =>
+    IMAGE_TYPES[file.mimetype] ? cb(null, true) : cb(Object.assign(new Error('Format accepté : JPG, PNG, GIF ou WebP'), { expose: true })),
 });
 
 const removeUpload = (url) => {
@@ -58,18 +78,56 @@ const removeUpload = (url) => {
 // Image : fichier envoyé > URL saisie > valeur actuelle
 const pickImage = (req, field, current = '') => {
   if (req.file) return `/uploads/${req.file.filename}`;
-  const url = (req.body[field] || '').trim();
-  return url || current;
+  return url(req.body[field]) || current;
 };
 
 // --- App -------------------------------------------------------------------
 const app = express();
-app.use(express.json());
+app.disable('x-powered-by');
+app.use((req, res, next) => {
+  res.set({
+    'Content-Security-Policy':
+      "default-src 'self'; img-src 'self' https: data:; style-src 'self' https://fonts.googleapis.com; " +
+      "font-src https://fonts.gstatic.com; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'same-origin',
+  });
+  next();
+});
+app.use(express.json({ limit: '10kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(UPLOAD_DIR));
 
-const requireAdmin = (req, res, next) =>
-  req.get('x-admin-password') === ADMIN_PASSWORD ? next() : res.status(401).json({ error: 'Mot de passe incorrect' });
+// Anti-spam (et donc anti-flood Discord) : max `max` appels par clé sur `windowMs`
+function limiter(max, windowMs) {
+  const hits = new Map();
+  return (key) => {
+    const now = Date.now();
+    const entry = hits.get(key);
+    if (!entry || now > entry.reset) {
+      hits.set(key, { count: 1, reset: now + windowMs });
+      return true;
+    }
+    return ++entry.count <= max;
+  };
+}
+
+// Anti brute-force : après 10 mauvais mots de passe, l'admin est verrouillé 15 min (global, indépendant de l'IP)
+const PASSWORD_HASH = crypto.createHash('sha256').update(ADMIN_PASSWORD).digest();
+const login = { failures: 0, reset: 0 };
+const requireAdmin = (req, res, next) => {
+  if (Date.now() > login.reset) Object.assign(login, { failures: 0, reset: Date.now() + 15 * 60 * 1000 });
+  if (login.failures >= 10) return res.status(429).json({ error: 'Trop de tentatives, réessayez dans 15 minutes' });
+  const given = crypto.createHash('sha256').update(req.get('x-admin-password') || '').digest();
+  if (crypto.timingSafeEqual(given, PASSWORD_HASH)) return next();
+  login.failures++;
+  res.status(401).json({ error: 'Mot de passe incorrect' });
+};
+
+// 20 prises/libérations par minute et par IP
+const actionLimit = limiter(20, 60 * 1000);
+const limitActions = (req, res, next) =>
+  actionLimit(req.ip) ? next() : res.status(429).json({ error: 'Trop de modifications, patientez une minute' });
 
 const findItem = (req, res) => {
   const item = db.items.find((i) => i.id === req.params.id);
@@ -79,8 +137,8 @@ const findItem = (req, res) => {
 
 // Renvoie "Prénom Nom" ou répond 400 si incomplet
 const getPerson = (req, res) => {
-  const first = (req.body.firstName || '').trim();
-  const last = (req.body.lastName || '').trim();
+  const first = personName(req.body.firstName);
+  const last = personName(req.body.lastName);
   if (first && last) return `${first} ${last}`;
   res.status(400).json({ error: 'Nom et prénom obligatoires' });
 };
@@ -89,7 +147,7 @@ const getPerson = (req, res) => {
 app.get('/api/settings', (req, res) => res.json(db.settings));
 app.get('/api/items', (req, res) => res.json(db.items));
 
-app.post('/api/items/:id/take', (req, res) => {
+app.post('/api/items/:id/take', limitActions, (req, res) => {
   const item = findItem(req, res);
   if (!item) return;
   const name = getPerson(req, res);
@@ -103,7 +161,7 @@ app.post('/api/items/:id/take', (req, res) => {
   res.json(item);
 });
 
-app.post('/api/items/:id/release', (req, res) => {
+app.post('/api/items/:id/release', limitActions, (req, res) => {
   const item = findItem(req, res);
   if (!item) return;
   const name = getPerson(req, res);
@@ -122,15 +180,15 @@ app.post('/api/items/:id/release', (req, res) => {
 app.post('/api/login', requireAdmin, (req, res) => res.json({ ok: true }));
 
 app.post('/api/items', requireAdmin, upload.single('image'), (req, res) => {
-  const { title, description = '', link = '', price = '' } = req.body;
-  if (!title?.trim()) return res.status(400).json({ error: 'Titre obligatoire' });
+  const title = str(req.body.title, 120);
+  if (!title) return res.status(400).json({ error: 'Titre obligatoire' });
 
   const item = {
     id: crypto.randomUUID(),
-    title: title.trim(),
-    description: description.trim(),
-    link: link.trim(),
-    price: price.trim(),
+    title,
+    description: str(req.body.description, 1000),
+    link: url(req.body.link),
+    price: str(req.body.price, 30),
     image: pickImage(req, 'imageUrl'),
     takenBy: null,
     takenAt: null,
@@ -147,9 +205,10 @@ app.put('/api/items/:id', requireAdmin, upload.single('image'), (req, res) => {
   const newImage = pickImage(req, 'imageUrl', item.image);
   if (newImage !== item.image) removeUpload(item.image);
 
-  for (const key of ['title', 'description', 'link', 'price']) {
-    if (req.body[key] !== undefined) item[key] = req.body[key].trim();
-  }
+  item.title = str(req.body.title, 120) || item.title;
+  item.description = str(req.body.description, 1000);
+  item.link = url(req.body.link);
+  item.price = str(req.body.price, 30);
   item.image = newImage;
   if (req.body.resetTaken === 'true') item.takenBy = item.takenAt = null;
   save(db);
@@ -170,14 +229,22 @@ app.delete('/api/items/:id', requireAdmin, (req, res) => {
 app.put('/api/settings', requireAdmin, upload.single('background'), (req, res) => {
   const { title, subtitle, removeBackground } = req.body;
   const s = db.settings;
-  if (title !== undefined) s.title = title.trim();
-  if (subtitle !== undefined) s.subtitle = subtitle.trim();
+  s.title = str(title, 120) || s.title;
+  s.subtitle = str(subtitle, 200);
 
   const newBg = removeBackground === 'true' ? '' : pickImage(req, 'backgroundUrl', s.background);
   if (newBg !== s.background) removeUpload(s.background);
   s.background = newBg;
   save(db);
   res.json(s);
+});
+
+// Erreurs (upload refusé, JSON invalide…) : message JSON, jamais de trace
+app.use((err, req, res, next) => {
+  if (err.code === 'LIMIT_FILE_SIZE') return res.status(400).json({ error: 'Image trop lourde (10 Mo max)' });
+  const known = err.expose || err instanceof multer.MulterError;
+  if (!known) console.error(err);
+  res.status(known ? err.status || 400 : 500).json({ error: known ? err.message : 'Erreur serveur' });
 });
 
 app.listen(PORT, () => console.log(`Wishlist disponible sur le port ${PORT}`));
